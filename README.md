@@ -1,1 +1,58 @@
 # pgsandpit
+
+[![test](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml/badge.svg)](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml)
+
+pgsandpit is a Go testing library for PostgreSQL. It gives each test its own session wrapped in a transaction, hands the test `*sql.DB` values that run on that session, and rolls everything back when the test ends.
+
+## Usage
+
+```go
+package myapp_test
+
+import (
+	"testing"
+
+	"github.com/winebarrel/pgsandpit"
+)
+
+var sandpit = pgsandpit.New("postgres://postgres@localhost:5432/postgres")
+
+func TestReport(t *testing.T) {
+	t.Parallel()
+
+	s := sandpit.Session(t)            // one connection, one transaction; rolled back when t ends
+	db := s.DB()                        // a *sql.DB on the session
+	ro := s.With().ReadOnly().DB()      // another one that rejects writes
+
+	db.Exec(`INSERT INTO orders ...`)   // ro sees this: both share the session
+	svc := NewReportService(db, ro)
+	// ...
+}
+```
+
+Options for a `*sql.DB` are chained after `With()`:
+
+```go
+db := s.With().ReadOnly().Timeout(5 * time.Second).DB()
+```
+
+## Behavior
+
+- **Isolation**: each `Session` has its own connection and transaction, so parallel tests do not see each other's data. Tests that write the same rows or unique keys still wait for each other's locks until the first test ends.
+- **Transactions**: `Begin` creates a savepoint, `Commit` releases it, and `Rollback` rolls back to it. `TxOptions` are ignored. Committing a transaction that hit an error rolls it back and returns `pgx.ErrTxCommitRollback`, as PostgreSQL does.
+- **Statements outside a transaction** each run in their own savepoint, so a failing statement (such as a unique violation) fails alone, as in autocommit mode, instead of aborting the rest of the test.
+- **Serialization**: one statement, or one transaction, runs on a session at a time; the others wait. A call that waits longer than the timeout (10 seconds by default) returns an error wrapping `pgsandpit.ErrTimeout`, with the stack of the `Begin` that holds the session. This is usually a transaction left open, or a `*sql.DB` used outside a transaction while that transaction is open in the same goroutine.
+- **Read-only**: a read-only `*sql.DB` runs each statement with `transaction_read_only` on, so PostgreSQL rejects writes, including writes inside functions.
+- **Rows** are read in full before a query returns, so an open `*sql.Rows` does not hold the session.
+- **Cancellation**: a canceled context cancels the query on the server and leaves the session usable. A transaction whose context is canceled is rolled back.
+
+## Out of scope
+
+Tests of concurrency itself (lock waits, `SELECT ... FOR UPDATE`, isolation levels) and of session state (`SET`, advisory locks, temporary tables shared across `*sql.DB` values) need real separate connections.
+
+## Running the tests
+
+```sh
+docker compose up -d
+make test
+```
