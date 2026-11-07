@@ -2,6 +2,7 @@
 
 [![test](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml/badge.svg)](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/winebarrel/pgsandpit/graph/badge.svg)](https://codecov.io/gh/winebarrel/pgsandpit)
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.com/claude-code)
 
 pgsandpit is a Go testing library for PostgreSQL. It gives each test its own session wrapped in a transaction, hands the test `*sql.DB` values that run on that session, and rolls everything back when the test ends.
 
