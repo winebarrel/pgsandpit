@@ -1,5 +1,7 @@
 # pgsandpit
 
+[![GitHub Tag](https://img.shields.io/github/v/tag/winebarrel/pgsandpit.svg)](https://pkg.go.dev/github.com/winebarrel/pgsandpit?tab=versions)
+[![Go Reference](https://pkg.go.dev/badge/github.com/winebarrel/pgsandpit.svg)](https://pkg.go.dev/github.com/winebarrel/pgsandpit)
 [![test](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml/badge.svg)](https://github.com/winebarrel/pgsandpit/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/winebarrel/pgsandpit/graph/badge.svg)](https://codecov.io/gh/winebarrel/pgsandpit)
 [![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.com/claude-code)
