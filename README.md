@@ -48,6 +48,23 @@ db := s.With().Connector(func(c driver.Connector) driver.Connector {
 }).DB()
 ```
 
+To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
+
+```go
+cfg, err := pgx.ParseConfig("postgres://postgres@localhost:5432/postgres")
+if err != nil {
+	log.Fatal(err)
+}
+sandpit := pgsandpit.NewWithConfig(cfg,
+	stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, "SET TIME ZONE 'UTC'")
+		return err
+	}),
+)
+```
+
+The connections are pooled across sessions, so `OptionAfterConnect` runs once per connection, not once per session. pgsandpit replaces `BuildContextWatcherHandler` (see Cancellation below).
+
 ## Behavior
 
 - **Isolation**: each `Session` has its own connection and transaction, so parallel tests do not see each other's data. Tests that write the same rows or unique keys still wait for each other's locks until the first test ends.
