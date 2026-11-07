@@ -40,6 +40,14 @@ Options for a `*sql.DB` are chained after `With()`:
 db := s.With().ReadOnly().Timeout(5 * time.Second).DB()
 ```
 
+`Connector` is given the connector pgsandpit made for the `*sql.DB` and returns the connector to open it with, as `sql.OpenDB` takes one. For example, a connector that wraps it can hook into the queries:
+
+```go
+db := s.With().Connector(func(c driver.Connector) driver.Connector {
+	return &MyConnector{c}
+}).DB()
+```
+
 To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
 
 ```go

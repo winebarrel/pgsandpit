@@ -11,9 +11,10 @@ import (
 // Builder builds a *sql.DB for a Session. Each method returns a new Builder,
 // so a Builder can be shared and branched.
 type Builder struct {
-	s        *Session
-	readOnly bool
-	timeout  time.Duration
+	s         *Session
+	readOnly  bool
+	timeout   time.Duration
+	connector func(driver.Connector) driver.Connector
 }
 
 // ReadOnly makes the *sql.DB reject writes. It still sees what the other
@@ -34,10 +35,23 @@ func (b *Builder) Timeout(d time.Duration) *Builder {
 	return &c
 }
 
+// Connector sets a function that is given the connector pgsandpit made for the
+// *sql.DB and returns the connector the *sql.DB is opened with, as by
+// sql.OpenDB.
+func (b *Builder) Connector(f func(driver.Connector) driver.Connector) *Builder {
+	c := *b
+	c.connector = f
+	return &c
+}
+
 // DB returns the *sql.DB. It is closed when the test ends; closing it earlier
 // does not end the session.
 func (b *Builder) DB() *sql.DB {
-	db := sql.OpenDB(&connector{b: *b})
+	var c driver.Connector = &connector{b: *b}
+	if b.connector != nil {
+		c = b.connector(c)
+	}
+	db := sql.OpenDB(c)
 	// Registered after the session's cleanup, so it runs before it.
 	b.s.t.Cleanup(func() { _ = db.Close() })
 	return db
