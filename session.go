@@ -10,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 var (
@@ -116,6 +119,29 @@ func (s *Session) close() {
 	if release != nil {
 		release()
 	}
+}
+
+// withPgxConn runs f with the session's *pgx.Conn while it holds the session.
+func (s *Session) withPgxConn(timeout time.Duration, f func(*pgx.Conn)) error {
+	release, err := s.acquire(context.Background(), timeout)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	var c *pgx.Conn
+	if err := s.conn.Raw(func(dc any) error {
+		c = dc.(*stdlib.Conn).Conn()
+		return nil
+	}); err != nil {
+		return fmt.Errorf("pgsandpit: %w", err)
+	}
+	// f runs outside Raw: if it ended the goroutine inside Raw, as t.FailNow
+	// does, Raw would take it for a panic and release the connection with
+	// driver.ErrBadConn, so that database/sql may discard it. Holding the session
+	// keeps c from being used by anything else meanwhile.
+	f(c)
+	return nil
 }
 
 func currentStack() string {
