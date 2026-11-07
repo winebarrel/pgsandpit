@@ -279,6 +279,11 @@ func TestReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, countUsers(t, db, "ro-write@example.com"))
 
+	t.Run("write in a function", func(t *testing.T) {
+		_, err := ro.Exec(`SELECT nextval('users_id_seq')`)
+		require.ErrorContains(t, err, "read-only transaction")
+	})
+
 	t.Run("in a tx", func(t *testing.T) {
 		tx, err := ro.Begin()
 		require.NoError(t, err)
@@ -288,6 +293,16 @@ func TestReadOnly(t *testing.T) {
 		require.ErrorIs(t, tx.Commit(), pgx.ErrTxCommitRollback)
 
 		_, err = db.Exec(`INSERT INTO users (email) VALUES ('after-ro-tx@example.com')`)
+		require.NoError(t, err)
+	})
+
+	t.Run("tx that only reads", func(t *testing.T) {
+		tx, err := ro.Begin()
+		require.NoError(t, err)
+		assert.Equal(t, 1, countUsers(t, tx, "readonly@example.com"))
+		require.NoError(t, tx.Commit())
+
+		_, err = db.Exec(`INSERT INTO users (email) VALUES ('after-ro-read-tx@example.com')`)
 		require.NoError(t, err)
 	})
 }
