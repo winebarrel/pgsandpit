@@ -24,7 +24,7 @@ var sandpit = pgsandpit.New("postgres://postgres@localhost:5432/postgres")
 func TestReport(t *testing.T) {
 	t.Parallel()
 
-	s := sandpit.Session(t)            // one connection, one transaction; rolled back when t ends
+	s := sandpit.Session(t)             // one connection, one transaction; rolled back when t ends
 	db := s.DB()                        // a *sql.DB on the session
 	ro := s.With().ReadOnly().DB()      // another one that rejects writes
 
