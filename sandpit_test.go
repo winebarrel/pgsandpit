@@ -2,6 +2,7 @@ package pgsandpit_test
 
 import (
 	"context"
+	"flag"
 	"os"
 	"os/exec"
 	"testing"
@@ -12,14 +13,23 @@ import (
 	"github.com/winebarrel/pgsandpit"
 )
 
+// childEnv is set in the environment of a child process started by runChild.
+const childEnv = "PGSANDPIT_CHILD"
+
 // runChild runs the top-level test name in a child process with env added, for
 // tests whose subject is a test failing. It returns the child's output.
 func runChild(t *testing.T, name string, env ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+name+"$", "-test.v")
-	cmd.Env = append(os.Environ(), env...)
+	args := []string{"-test.run=^" + name + "$", "-test.v"}
+	// Under `go test -cover`, write the child's coverage where go test collects
+	// this process's, so that what the child runs is counted too.
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		args = append(args, "-test.gocoverdir="+f.Value.String())
+	}
+	cmd := exec.CommandContext(ctx, os.Args[0], args...)
+	cmd.Env = append(append(os.Environ(), childEnv+"=1"), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -94,4 +104,26 @@ func TestDriverCannotOpenConnections(t *testing.T) {
 
 	_, err := db.Driver().Open(dsn())
 	require.ErrorContains(t, err, "Session.DB")
+}
+
+func TestTerminatedSessionFailsTest(t *testing.T) {
+	if os.Getenv("PGSANDPIT_CHILD_TERMINATE") != "" {
+		db := sandpit.Session(t).DB()
+		_, err := db.Exec(`SELECT pg_terminate_backend(pg_backend_pid())`)
+		assert.Error(t, err)
+
+		// Calls after the connection is gone fail instead of waiting.
+		_, err = db.Exec(`SELECT 1`)
+		assert.Error(t, err)
+		_, err = db.Begin()
+		assert.Error(t, err)
+		return
+	}
+	t.Parallel()
+
+	out, err := runChild(t, "TestTerminatedSessionFailsTest", "PGSANDPIT_CHILD_TERMINATE=1")
+	require.Error(t, err)
+	assert.Contains(t, out, "pgsandpit: failed to roll back the session transaction")
+	// The child's own assertions passed: the only failure is the cleanup's.
+	assert.NotContains(t, out, "Error Trace")
 }

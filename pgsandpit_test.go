@@ -25,12 +25,28 @@ func dsn() string {
 }
 
 func TestMain(m *testing.M) {
+	// A child process (see runChild) uses the schema its parent set up, which
+	// the parent's running tests hold locks on.
+	if os.Getenv(childEnv) == "" {
+		if err := setupSchema(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
+	sandpit = pgsandpit.New(dsn())
+	code := m.Run()
+	sandpit.Close()
+	os.Exit(code)
+}
+
+func setupSchema() error {
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, dsn())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect (run `docker compose up -d`): %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect (run `docker compose up -d`): %w", err)
 	}
+	defer conn.Close(ctx)
 	_, err = conn.Exec(ctx, `
 		DROP TABLE IF EXISTS users;
 		CREATE TABLE users (
@@ -39,16 +55,10 @@ func TestMain(m *testing.M) {
 		);
 		INSERT INTO users (email) VALUES ('committed@example.com');
 	`)
-	conn.Close(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set up the schema: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to set up the schema: %w", err)
 	}
-
-	sandpit = pgsandpit.New(dsn())
-	code := m.Run()
-	sandpit.Close()
-	os.Exit(code)
+	return nil
 }
 
 type querier interface {
