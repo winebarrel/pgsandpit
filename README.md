@@ -48,6 +48,17 @@ db := s.With().Connector(func(c driver.Connector) driver.Connector {
 }).DB()
 ```
 
+`Conn` is called once, when `DB` makes the `*sql.DB`, with the session's `*pgx.Conn`, for example to use pgx's API:
+
+```go
+db := s.With().Conn(func(c *pgx.Conn) {
+	_, err := c.CopyFrom(t.Context(), pgx.Identifier{"users"}, []string{"email"}, pgx.CopyFromRows(rows))
+	require.NoError(t, err)
+}).DB()
+```
+
+What it runs, runs in the session's transaction as it is: it is not read-only, and a failing statement aborts the session's transaction. It must not begin, commit or roll back a transaction.
+
 To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
 
 ```go

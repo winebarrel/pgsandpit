@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Builder builds a *sql.DB for a Session. Each method returns a new Builder,
@@ -15,6 +17,7 @@ type Builder struct {
 	readOnly  bool
 	timeout   time.Duration
 	connector func(driver.Connector) driver.Connector
+	conn      func(*pgx.Conn)
 }
 
 // ReadOnly makes the *sql.DB reject writes. It still sees what the other
@@ -44,9 +47,27 @@ func (b *Builder) Connector(f func(driver.Connector) driver.Connector) *Builder 
 	return &c
 }
 
+// Conn sets a function that DB calls once, before it returns, with the
+// session's *pgx.Conn. DB waits for the session as the *sql.DB's calls do, and
+// holds it while f runs.
+//
+// What f runs, runs in the session's transaction as it is: it is not read-only,
+// and a statement that fails aborts the session's transaction. f must not
+// begin, commit or roll back a transaction, nor use c after it returns.
+func (b *Builder) Conn(f func(c *pgx.Conn)) *Builder {
+	c := *b
+	c.conn = f
+	return &c
+}
+
 // DB returns the *sql.DB. It is closed when the test ends; closing it earlier
 // does not end the session.
 func (b *Builder) DB() *sql.DB {
+	if b.conn != nil {
+		if err := b.s.withPgxConn(b.timeout, b.conn); err != nil {
+			b.s.t.Fatal(err)
+		}
+	}
 	var c driver.Connector = &connector{b: *b}
 	if b.connector != nil {
 		c = b.connector(c)
