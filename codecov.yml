@@ -1,0 +1,9 @@
+coverage:
+  status:
+    project:
+      default:
+        # A defensive branch that no test reaches can lower the total a little.
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
