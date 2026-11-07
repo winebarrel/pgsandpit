@@ -39,6 +39,9 @@ const cancelDeadlineDelay = 30 * time.Second
 // Sandpit opens sessions on one database. Create it once per test package.
 type Sandpit struct {
 	dsn  string
+	cfg  *pgx.ConnConfig
+	opts []stdlib.OptionOpenDB
+
 	once sync.Once
 	db   *sql.DB
 	err  error
@@ -50,12 +53,28 @@ func New(dsn string) *Sandpit {
 	return &Sandpit{dsn: dsn}
 }
 
+// NewWithConfig returns a Sandpit that connects with a copy of cfg and opts,
+// as stdlib.OpenDB does. It does not connect until the first Session call.
+//
+// pgsandpit replaces cfg.BuildContextWatcherHandler, so that a canceled context
+// cancels the query instead of closing the session's connection.
+//
+// The connections are pooled across sessions: a hook such as
+// stdlib.OptionAfterConnect runs once per connection, not once per session.
+func NewWithConfig(cfg *pgx.ConnConfig, opts ...stdlib.OptionOpenDB) *Sandpit {
+	return &Sandpit{cfg: cfg.Copy(), opts: opts}
+}
+
 func (sp *Sandpit) pool() (*sql.DB, error) {
 	sp.once.Do(func() {
-		cfg, err := pgx.ParseConfig(sp.dsn)
-		if err != nil {
-			sp.err = err
-			return
+		cfg := sp.cfg
+		if cfg == nil {
+			var err error
+			cfg, err = pgx.ParseConfig(sp.dsn)
+			if err != nil {
+				sp.err = err
+				return
+			}
 		}
 		// pgx's default closes the connection when a context is canceled, which
 		// would end the whole session. Ask the server to cancel the query
@@ -66,7 +85,7 @@ func (sp *Sandpit) pool() (*sql.DB, error) {
 				DeadlineDelay: cancelDeadlineDelay,
 			}
 		}
-		sp.db = sql.OpenDB(stdlib.GetConnector(*cfg))
+		sp.db = sql.OpenDB(stdlib.GetConnector(*cfg, sp.opts...))
 	})
 	return sp.db, sp.err
 }

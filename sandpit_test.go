@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/winebarrel/pgsandpit"
@@ -126,4 +130,63 @@ func TestTerminatedSessionFailsTest(t *testing.T) {
 	assert.Contains(t, out, "pgsandpit: failed to roll back the session transaction")
 	// The child's own assertions passed: the only failure is the cleanup's.
 	assert.NotContains(t, out, "Error Trace")
+}
+
+func TestNewWithConfig(t *testing.T) {
+	t.Parallel()
+
+	showSetting := func(t *testing.T, sp *pgsandpit.Sandpit, name string) string {
+		t.Helper()
+		var v string
+		db := sp.Session(t).DB()
+		require.NoError(t, db.QueryRow(`SELECT current_setting($1)`, name).Scan(&v))
+		return v
+	}
+
+	t.Run("config", func(t *testing.T) {
+		cfg, err := pgx.ParseConfig(dsn())
+		require.NoError(t, err)
+		cfg.RuntimeParams["application_name"] = "pgsandpit-config"
+		sp := pgsandpit.NewWithConfig(cfg)
+		defer sp.Close()
+
+		// Changing cfg afterwards does not change the Sandpit.
+		cfg.RuntimeParams["application_name"] = "changed"
+
+		assert.Equal(t, "pgsandpit-config", showSetting(t, sp, "application_name"))
+	})
+
+	t.Run("options", func(t *testing.T) {
+		cfg, err := pgx.ParseConfig(dsn())
+		require.NoError(t, err)
+		sp := pgsandpit.NewWithConfig(cfg,
+			stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error {
+				_, err := c.Exec(ctx, `SET TIME ZONE 'Asia/Tokyo'`)
+				return err
+			}),
+		)
+		defer sp.Close()
+
+		assert.Equal(t, "Asia/Tokyo", showSetting(t, sp, "TimeZone"))
+	})
+
+	t.Run("a canceled context does not close the connection", func(t *testing.T) {
+		cfg, err := pgx.ParseConfig(dsn())
+		require.NoError(t, err)
+		// pgx's default, which closes the connection; pgsandpit replaces it.
+		cfg.BuildContextWatcherHandler = func(pgConn *pgconn.PgConn) ctxwatch.Handler {
+			return &pgconn.DeadlineContextWatcherHandler{Conn: pgConn.Conn()}
+		}
+		sp := pgsandpit.NewWithConfig(cfg)
+		defer sp.Close()
+
+		t.Run("session", func(t *testing.T) {
+			db := sp.Session(t).DB()
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, err := db.ExecContext(ctx, `SELECT pg_sleep(10)`)
+			require.Error(t, err)
+			assert.NoError(t, db.Ping())
+		})
+	})
 }
