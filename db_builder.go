@@ -23,7 +23,8 @@ type DBBuilder struct {
 // ReadOnly makes the *sql.DB reject writes. It still sees what the other
 // *sql.DB values of the session wrote. A rejected write fails only that
 // statement, as in a read-only transaction outside a test, except that inside
-// an application transaction it aborts that transaction.
+// an application transaction it aborts that transaction. Every *sql.DB of a
+// session built with SessionBuilder.ReadOnly is read-only.
 func (b *DBBuilder) ReadOnly() *DBBuilder {
 	c := *b
 	c.readOnly = true

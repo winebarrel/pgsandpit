@@ -21,9 +21,19 @@ import (
 //	}
 type SessionBuilder struct {
 	sp        *Sandpit
+	readOnly  bool
 	timeout   time.Duration
 	connector func(driver.Connector) driver.Connector
 	conn      func(*pgx.Conn)
+}
+
+// ReadOnly makes every *sql.DB of the session reject writes, as
+// DBBuilder.ReadOnly does. A function set with Conn is not affected by it, so
+// it can insert the data the test reads.
+func (b *SessionBuilder) ReadOnly() *SessionBuilder {
+	c := *b
+	c.readOnly = true
+	return &c
 }
 
 // Timeout sets how long a call waits for the session while another transaction
@@ -84,6 +94,7 @@ func (b *SessionBuilder) Session(t *testing.T) *Session {
 		t:         t,
 		conn:      conn,
 		tx:        tx,
+		readOnly:  b.readOnly,
 		timeout:   b.timeout,
 		connector: b.connector,
 		sem:       make(chan struct{}, 1),
