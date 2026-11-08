@@ -116,6 +116,29 @@ sandpit := pgsandpit.NewWithConfig(cfg,
 
 The connections are pooled across sessions, so `OptionAfterConnect` runs once per connection, not once per session. pgsandpit replaces `BuildContextWatcherHandler` (see Cancellation below).
 
+To choose a database by name, for example in a table-driven test, register a `Sandpit` under a name and get it with `Lookup`. Each test package runs in its own process, so a package shared by the tests can register the names in its `init` function:
+
+```go
+// internal/testdb/testdb.go
+package testdb
+
+func init() {
+	pgsandpit.Register("testdb1", pgsandpit.New("postgres://xxx"))
+	pgsandpit.Register("testdb2", pgsandpit.New("postgres://yyy"))
+}
+```
+
+```go
+import _ "example.com/myapp/internal/testdb"
+
+func TestFoo(t *testing.T) {
+	s := pgsandpit.Lookup("testdb1").Session(t)
+	// ...
+}
+```
+
+`Register` panics if the name is already registered, and `Lookup` panics if it is not registered. A `Sandpit` does not connect until the first `Session` call, so registering one does not connect to the database.
+
 ## Behavior
 
 - **Isolation**: each `Session` has its own connection and transaction, so parallel tests do not see each other's data. Tests that write the same rows or unique keys still wait for each other's locks until the first test ends.
