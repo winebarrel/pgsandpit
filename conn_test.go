@@ -16,7 +16,7 @@ func TestDBBuilderConn(t *testing.T) {
 	t.Run("runs once on the session when the *sql.DB is made", func(t *testing.T) {
 		s := sandpit.Session(t)
 		calls := 0
-		b := s.With().Conn(func(c *pgx.Conn) {
+		b := s.With().Conn(func(t *testing.T, c *pgx.Conn) {
 			calls++
 			_, err := c.CopyFrom(t.Context(), pgx.Identifier{"users"}, []string{"email"},
 				pgx.CopyFromRows([][]any{{"copy1@example.com"}, {"copy2@example.com"}}))
@@ -37,7 +37,7 @@ func TestDBBuilderConn(t *testing.T) {
 		s := sandpit.Session(t)
 		b := s.With()
 		called := false
-		_ = b.Conn(func(*pgx.Conn) { called = true })
+		_ = b.Conn(func(*testing.T, *pgx.Conn) { called = true })
 
 		require.NoError(t, b.DB().Ping())
 		assert.False(t, called)
@@ -51,7 +51,7 @@ func TestDBBuilderConn(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			s.With().Conn(func(c *pgx.Conn) {
+			s.With().Conn(func(t *testing.T, c *pgx.Conn) {
 				var n int
 				assert.NoError(t, c.QueryRow(t.Context(), `SELECT count(*) FROM users WHERE email = 'waited@example.com'`).Scan(&n))
 				assert.Equal(t, 1, n)
@@ -71,7 +71,7 @@ func TestDBBuilderConnFailsTest(t *testing.T) {
 	case "":
 	case "assertion":
 		s := sandpit.Session(t)
-		s.With().Conn(func(*pgx.Conn) {
+		s.With().Conn(func(*testing.T, *pgx.Conn) {
 			require.Fail(t, "failed in the callback")
 		}).DB()
 		t.Log("DB returned")
@@ -81,7 +81,7 @@ func TestDBBuilderConnFailsTest(t *testing.T) {
 		tx, err := s.DB().Begin()
 		require.NoError(t, err)
 		defer tx.Rollback()
-		s.With().Timeout(100 * time.Millisecond).Conn(func(*pgx.Conn) {}).DB()
+		s.With().Timeout(100 * time.Millisecond).Conn(func(*testing.T, *pgx.Conn) {}).DB()
 		t.Log("DB returned")
 		return
 	}

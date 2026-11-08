@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,8 +17,8 @@ type DBBuilder struct {
 	s         *Session
 	readOnly  bool
 	timeout   time.Duration
-	connector func(driver.Connector) driver.Connector
-	conn      func(*pgx.Conn)
+	connector func(*testing.T, driver.Connector) driver.Connector
+	conn      func(*testing.T, *pgx.Conn)
 }
 
 // ReadOnly makes the *sql.DB reject writes. It still sees what the other
@@ -43,21 +44,22 @@ func (b *DBBuilder) Timeout(d time.Duration) *DBBuilder {
 // Connector sets a function that is given the connector pgsandpit made for the
 // *sql.DB and returns the connector the *sql.DB is opened with, as by
 // sql.OpenDB. If the session was built with SessionBuilder.Connector, f is
-// given the connector that function returned.
-func (b *DBBuilder) Connector(f func(driver.Connector) driver.Connector) *DBBuilder {
+// given the connector that function returned. t is the test the session was
+// opened for.
+func (b *DBBuilder) Connector(f func(t *testing.T, c driver.Connector) driver.Connector) *DBBuilder {
 	c := *b
 	c.connector = f
 	return &c
 }
 
 // Conn sets a function that DB calls once, before it returns, with the
-// session's *pgx.Conn. DB waits for the session as the *sql.DB's calls do, and
-// holds it while f runs.
+// test the session was opened for and the session's *pgx.Conn. DB waits for the
+// session as the *sql.DB's calls do, and holds it while f runs.
 //
 // What f runs, runs in the session's transaction as it is: it is not read-only,
 // and a statement that fails aborts the session's transaction. f must not
 // begin, commit or roll back a transaction, nor use c after it returns.
-func (b *DBBuilder) Conn(f func(c *pgx.Conn)) *DBBuilder {
+func (b *DBBuilder) Conn(f func(t *testing.T, c *pgx.Conn)) *DBBuilder {
 	c := *b
 	c.conn = f
 	return &c
@@ -73,10 +75,10 @@ func (b *DBBuilder) DB() *sql.DB {
 	}
 	var c driver.Connector = &connector{b: *b}
 	if b.s.connector != nil {
-		c = b.s.connector(c)
+		c = b.s.connector(b.s.t, c)
 	}
 	if b.connector != nil {
-		c = b.connector(c)
+		c = b.connector(b.s.t, c)
 	}
 	db := sql.OpenDB(c)
 	// Registered after the session's cleanup, so it runs before it.

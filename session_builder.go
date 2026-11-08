@@ -23,8 +23,8 @@ type SessionBuilder struct {
 	sp         *Sandpit
 	readOnly   bool
 	timeout    time.Duration
-	connector  func(driver.Connector) driver.Connector
-	conn       func(*pgx.Conn)
+	connector  func(*testing.T, driver.Connector) driver.Connector
+	conn       func(*testing.T, *pgx.Conn)
 	cache      bool
 	interleave bool
 }
@@ -50,23 +50,24 @@ func (b *SessionBuilder) Timeout(d time.Duration) *SessionBuilder {
 
 // Connector sets a function that is given the connector pgsandpit made for each
 // *sql.DB of the session and returns the connector the *sql.DB is opened with.
-// It is called each time a *sql.DB is made. A function set with
-// DBBuilder.Connector is given what f returns.
-func (b *SessionBuilder) Connector(f func(driver.Connector) driver.Connector) *SessionBuilder {
+// It is called each time a *sql.DB is made, with the test the session was opened
+// for as t. A function set with DBBuilder.Connector is given what f returns.
+func (b *SessionBuilder) Connector(f func(t *testing.T, c driver.Connector) driver.Connector) *SessionBuilder {
 	c := *b
 	c.connector = f
 	return &c
 }
 
-// Conn sets a function that Session calls once, before it returns, with the
-// session's *pgx.Conn, for example to SET a parameter for the session or to
-// insert data the test needs. A parameter SET this way applies to every *sql.DB
-// of the session and is reset when the session's transaction is rolled back.
+// Conn sets a function that Session calls once, before it returns, with the t
+// given to Session and the session's *pgx.Conn, for example to SET a parameter
+// for the session or to insert data the test needs. A parameter SET this way
+// applies to every *sql.DB of the session and is reset when the session's
+// transaction is rolled back.
 //
 // What f runs, runs in the session's transaction as it is: a statement that
 // fails aborts the session's transaction. f must not begin, commit or roll back
 // a transaction, nor use c after it returns.
-func (b *SessionBuilder) Conn(f func(c *pgx.Conn)) *SessionBuilder {
+func (b *SessionBuilder) Conn(f func(t *testing.T, c *pgx.Conn)) *SessionBuilder {
 	c := *b
 	c.conn = f
 	return &c
