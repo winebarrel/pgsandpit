@@ -82,6 +82,7 @@ func TestFoo(t *testing.T) {
 - `Connector` is applied to every `*sql.DB` of the session, each time one is made. A `Connector` set with `s.With().Connector(...)` is given the connector the session's returned.
 - `Conn` is called once, when `Session` makes the session, with the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
 - `Cache` makes `Session` return the session cached for `t` if there is one, and otherwise open one and cache it, so helpers can get the session from `t` alone. The options of the call that opened the session apply, and those of later calls are ignored. A subtest has its own `t`, so it gets its own session rather than its parent's.
+- `Interleave` lets a statement, or a transaction, run while an application transaction is open, instead of waiting for it to end (see Interleave below).
 
 ```go
 var cached = sandpit.With().Cache()
@@ -162,6 +163,22 @@ func TestFoo(t *testing.T) {
 - **Transactions**: `Begin` creates a savepoint, `Commit` releases it, and `Rollback` rolls back to it. `TxOptions` are ignored. Committing a transaction that hit an error rolls it back and returns `pgx.ErrTxCommitRollback`, as PostgreSQL does.
 - **Statements outside a transaction** each run in their own savepoint, so a failing statement (such as a unique violation) fails alone, as in autocommit mode, instead of aborting the rest of the test.
 - **Serialization**: one statement, or one transaction, runs on a session at a time; the others wait. A call that waits longer than the timeout (60 seconds by default) returns an error wrapping `pgsandpit.ErrTimeout`, with the stack of the `Begin` that holds the session. This is usually a transaction left open, or a `*sql.DB` used outside a transaction while that transaction is open in the same goroutine.
+- **Interleave**: code that begins a transaction on a `*sql.DB` and then, before the transaction ends, uses the `*sql.DB` outside the transaction, or begins another transaction on it, runs on several connections outside a test, but on one session in a test, where the second would wait for the first until it times out. With `sandpit.With().Interleave()`, it does not wait:
+  - A statement outside the open transaction runs inside it, in a savepoint of its own: it sees what the transaction wrote, a failure fails only that statement, and what it writes is rolled back with the transaction if the transaction rolls back.
+  - A transaction begun while another is open nests inside it. Nested transactions must end in the reverse order they began. If one ends before a transaction begun after it, PostgreSQL ends the later one with it: a `Commit` of the earlier one rolls both back and returns an error wrapping `pgsandpit.ErrTxOrder`, and so do the later one's statements, `Commit` and `Rollback`.
+  - Statements still run one at a time. Statements and transactions in other goroutines do not wait for an open transaction either, so transactions that overlap in different goroutines can end out of order.
+  - A transaction left open at the end of the test fails the test with the stack of its `Begin`.
+
+  ```go
+  db := sandpit.With().Interleave().Session(t).DB()
+
+  tx, _ := db.Begin()
+  tx.Exec(`INSERT INTO orders ...`)
+  db.QueryRow(`SELECT count(*) FROM orders`) // runs inside tx instead of waiting for it
+  inner, _ := db.Begin()                      // nests inside tx
+  inner.Commit()
+  tx.Commit()
+  ```
 - **Read-only**: a read-only `*sql.DB` runs each statement with `transaction_read_only` on, so PostgreSQL rejects writes, including writes inside functions.
 - **Rows** are read in full before a query returns, so an open `*sql.Rows` does not hold the session.
 - **Cancellation**: a canceled context cancels the query on the server and leaves the session usable. A transaction whose context is canceled is rolled back.

@@ -27,27 +27,42 @@ var (
 	// ErrSessionClosed is returned when a *sql.DB is used after its session
 	// ended.
 	ErrSessionClosed = errors.New("pgsandpit: session is closed")
+
+	// ErrTxOrder is returned, wrapped, with SessionBuilder.Interleave, when
+	// nested transactions do not end in the reverse order they began, such as
+	// when transactions in different goroutines overlap. The transactions that
+	// could not end as asked are rolled back.
+	ErrTxOrder = errors.New("pgsandpit: transactions ended out of order")
 )
 
 // Session is one PostgreSQL connection with one transaction open on it. Every
 // *sql.DB made from a Session runs on that connection, so they all see each
 // other's changes. Only one statement, or one application transaction, runs on
-// the session at a time; the others wait.
+// the session at a time; the others wait. With SessionBuilder.Interleave,
+// statements and transactions do not wait for an open application transaction:
+// they run, or nest, inside it (see there).
 type Session struct {
 	t    *testing.T
 	conn *sql.Conn
 	tx   *sql.Tx
 
 	// From the SessionBuilder: whether every *sql.DB is read-only, the default
-	// timeout of the *sql.DB values, and the connector function every *sql.DB
-	// is opened through.
-	readOnly  bool
-	timeout   time.Duration
-	connector func(driver.Connector) driver.Connector
+	// timeout of the *sql.DB values, the connector function every *sql.DB is
+	// opened through, and whether statements interleave with transactions.
+	readOnly   bool
+	timeout    time.Duration
+	connector  func(driver.Connector) driver.Connector
+	interleave bool
 
-	// sem is held while a statement or an application transaction runs.
+	// sem is held while a statement runs. Without interleave, an application
+	// transaction holds it until it ends; with interleave, a transaction holds
+	// it only while each of its statements runs.
 	sem    chan struct{}
 	closed bool // read and written only while sem is held
+
+	// txs are the open application transactions with interleave, the innermost
+	// last. Read and written only while sem is held.
+	txs []*tx
 
 	seq atomic.Uint64
 
@@ -142,7 +157,9 @@ func (s *Session) timeoutError(timeout time.Duration) error {
 	s.mu.Lock()
 	holder := s.holder
 	s.mu.Unlock()
-	if holder == "" {
+	// With interleave, transactions do not hold the session, so a wait for it
+	// is not a wait for a transaction.
+	if holder == "" || s.interleave {
 		return fmt.Errorf("%w after %s", ErrTimeout, timeout)
 	}
 	return fmt.Errorf("%w after %s: the session is held by a transaction that was begun at:\n%s", ErrTimeout, timeout, holder)
@@ -170,6 +187,9 @@ func (s *Session) close() {
 		s.t.Errorf("pgsandpit: the session is still in use at the end of the test: %s", err)
 	}
 	s.closed = true
+	for _, t := range s.txs {
+		s.t.Errorf("pgsandpit: a transaction is still open at the end of the test; it was begun at:\n%s", t.begunAt)
+	}
 
 	if err := s.tx.Rollback(); err != nil {
 		s.t.Errorf("pgsandpit: failed to roll back the session transaction: %s", err)
