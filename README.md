@@ -180,7 +180,7 @@ func TestFoo(t *testing.T) {
 
   tx, _ := db.Begin()
   tx.Exec(`INSERT INTO orders ...`)
-  db.QueryRow(`SELECT count(*) FROM orders`) // runs inside tx instead of waiting for it
+  db.QueryRow(`SELECT count(*) FROM orders`)  // runs inside tx instead of waiting for it
   inner, _ := db.Begin()                      // nests inside tx
   inner.Commit()
   tx.Commit()
