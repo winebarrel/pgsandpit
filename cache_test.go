@@ -39,7 +39,7 @@ func TestCacheFirstOptionsApply(t *testing.T) {
 	t.Parallel()
 
 	var calls atomic.Int32
-	conn := func(*pgx.Conn) { calls.Add(1) }
+	conn := func(*testing.T, *pgx.Conn) { calls.Add(1) }
 
 	s := sandpit.With().Cache().ReadOnly().Conn(conn).Session(t)
 	assert.Same(t, s, sandpit.With().Cache().Conn(conn).Session(t))

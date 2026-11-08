@@ -40,20 +40,22 @@ Options for a `*sql.DB` are chained after `With()`:
 db := s.With().ReadOnly().Timeout(5 * time.Second).DB()
 ```
 
-`Connector` is given the connector pgsandpit made for the `*sql.DB` and returns the connector to open it with, as `sql.OpenDB` takes one. For example, a connector that wraps it can hook into the queries:
+`Connector` is given the test the session was opened for and the connector pgsandpit made for the `*sql.DB`, and returns the connector to open it with, as `sql.OpenDB` takes one. For example, a connector that wraps it can hook into the queries:
 
 ```go
-db := s.With().Connector(func(c driver.Connector) driver.Connector {
+db := s.With().Connector(func(t *testing.T, c driver.Connector) driver.Connector {
 	return &MyConnector{c}
 }).DB()
 ```
 
-`Conn` is called once, when `DB` makes the `*sql.DB`, with the session's `*pgx.Conn`, for example to use pgx's API:
+`Conn` is called once, when `DB` makes the `*sql.DB`, with the test the session was opened for and the session's `*pgx.Conn`, for example to use pgx's API:
 
 ```go
-db := s.With().Conn(func(c *pgx.Conn) {
+db := s.With().Conn(func(t *testing.T, c *pgx.Conn) {
 	_, err := c.CopyFrom(t.Context(), pgx.Identifier{"users"}, []string{"email"}, pgx.CopyFromRows(rows))
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 }).DB()
 ```
 
@@ -64,9 +66,9 @@ Options for a session are chained after `sandpit.With()`. A `SessionBuilder` can
 ```go
 var base = sandpit.With().
 	Timeout(5 * time.Second).
-	Conn(func(c *pgx.Conn) {
-		if _, err := c.Exec(context.Background(), "SET TIME ZONE 'UTC'"); err != nil {
-			panic(err)
+	Conn(func(t *testing.T, c *pgx.Conn) {
+		if _, err := c.Exec(t.Context(), "SET TIME ZONE 'UTC'"); err != nil {
+			t.Fatal(err)
 		}
 	})
 
@@ -80,7 +82,7 @@ func TestFoo(t *testing.T) {
 - `ReadOnly` makes every `*sql.DB` of the session read-only. `Conn` is not affected by it, so it can insert the data the test reads.
 - `Timeout` is the default of the session's `*sql.DB` values, which `s.With().Timeout(...)` replaces. It also bounds how long the end of the test waits for a session that is still in use.
 - `Connector` is applied to every `*sql.DB` of the session, each time one is made. A `Connector` set with `s.With().Connector(...)` is given the connector the session's returned.
-- `Conn` is called once, when `Session` makes the session, with the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
+- `Conn` is called once, when `Session` makes the session, with the `t` given to `Session` and the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
 - `Cache` makes `Session` return the session cached for `t` if there is one, and otherwise open one and cache it, so helpers can get the session from `t` alone. The options of the call that opened the session apply, and those of later calls are ignored. A subtest has its own `t`, so it gets its own session rather than its parent's.
 - `Interleave` lets a statement, or a transaction, run while an application transaction is open, instead of waiting for it to end (see Interleave below).
 
@@ -105,10 +107,14 @@ func TestOrder(t *testing.T) {
 ```go
 s := sandpit.Session(t)
 
-err := svc.Transfer(ctx, s.DB(), from, to, 100)
-require.Error(t, err)
+if err := svc.Transfer(ctx, s.DB(), from, to, 100); err == nil {
+	t.Fatal("Transfer must fail")
+}
 
-assert.Equal(t, []pgsandpit.TxResult{pgsandpit.TxRolledBack}, s.TxResults())
+want := []pgsandpit.TxResult{pgsandpit.TxRolledBack}
+if got := s.TxResults(); !slices.Equal(got, want) {
+	t.Errorf("TxResults() = %v, want %v", got, want)
+}
 ```
 
 - `TxCommitted`: `Commit` succeeded.

@@ -57,7 +57,7 @@ func TestConnector(t *testing.T) {
 	t.Run("wrap the connector to hook into queries", func(t *testing.T) {
 		s := sandpit.Session(t)
 		hook := &hookConnector{}
-		db := s.With().Connector(func(c driver.Connector) driver.Connector {
+		db := s.With().Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
 			hook.Connector = c
 			return hook
 		}).DB()
@@ -80,7 +80,7 @@ func TestConnector(t *testing.T) {
 
 		cfg, err := pgx.ParseConfig(dsn())
 		require.NoError(t, err)
-		db := s.With().Connector(func(driver.Connector) driver.Connector {
+		db := s.With().Connector(func(*testing.T, driver.Connector) driver.Connector {
 			return stdlib.GetConnector(*cfg)
 		}).DB()
 
@@ -92,7 +92,7 @@ func TestConnector(t *testing.T) {
 		s := sandpit.Session(t)
 		b := s.With()
 		called := false
-		_ = b.Connector(func(c driver.Connector) driver.Connector {
+		_ = b.Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
 			called = true
 			return c
 		})

@@ -31,7 +31,7 @@ func TestSessionBuilderReadOnly(t *testing.T) {
 	})
 
 	t.Run("does not affect Conn", func(t *testing.T) {
-		s := sandpit.With().ReadOnly().Conn(func(c *pgx.Conn) {
+		s := sandpit.With().ReadOnly().Conn(func(t *testing.T, c *pgx.Conn) {
 			_, err := c.Exec(t.Context(), `INSERT INTO users (email) VALUES ('session-ro-conn@example.com')`)
 			require.NoError(t, err)
 		}).Session(t)
@@ -95,7 +95,7 @@ func TestSessionBuilderConnector(t *testing.T) {
 
 	t.Run("is applied to every *sql.DB", func(t *testing.T) {
 		var hooks []*hookConnector
-		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
+		s := sandpit.With().Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
 			h := &hookConnector{Connector: c}
 			hooks = append(hooks, h)
 			return h
@@ -113,13 +113,13 @@ func TestSessionBuilderConnector(t *testing.T) {
 
 	t.Run("is wrapped by DBBuilder.Connector", func(t *testing.T) {
 		sessionHook := &hookConnector{}
-		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
+		s := sandpit.With().Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
 			sessionHook.Connector = c
 			return sessionHook
 		}).Session(t)
 
 		dbHook := &hookConnector{}
-		_, err := s.With().Connector(func(c driver.Connector) driver.Connector {
+		_, err := s.With().Connector(func(t *testing.T, c driver.Connector) driver.Connector {
 			// Given what the session's function returned.
 			assert.Same(t, sessionHook, c)
 			dbHook.Connector = c
@@ -134,7 +134,7 @@ func TestSessionBuilderConnector(t *testing.T) {
 	t.Run("does not change the builder", func(t *testing.T) {
 		b := sandpit.With()
 		called := false
-		_ = b.Connector(func(c driver.Connector) driver.Connector {
+		_ = b.Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
 			called = true
 			return c
 		})
@@ -149,7 +149,7 @@ func TestSessionBuilderConn(t *testing.T) {
 
 	t.Run("runs once when the session is made", func(t *testing.T) {
 		calls := 0
-		b := sandpit.With().Conn(func(c *pgx.Conn) {
+		b := sandpit.With().Conn(func(t *testing.T, c *pgx.Conn) {
 			calls++
 			_, err := c.Exec(t.Context(), `INSERT INTO users (email) VALUES ('session-conn@example.com')`)
 			require.NoError(t, err)
@@ -165,7 +165,7 @@ func TestSessionBuilderConn(t *testing.T) {
 	})
 
 	t.Run("sets a parameter for every *sql.DB of the session", func(t *testing.T) {
-		s := sandpit.With().Conn(func(c *pgx.Conn) {
+		s := sandpit.With().Conn(func(t *testing.T, c *pgx.Conn) {
 			_, err := c.Exec(t.Context(), `SET application_name = 'pgsandpit_session_conn'`)
 			require.NoError(t, err)
 		}).Session(t)
@@ -180,16 +180,39 @@ func TestSessionBuilderConn(t *testing.T) {
 	t.Run("does not change the builder", func(t *testing.T) {
 		b := sandpit.With()
 		called := false
-		_ = b.Conn(func(*pgx.Conn) { called = true })
+		_ = b.Conn(func(*testing.T, *pgx.Conn) { called = true })
 
 		require.NoError(t, b.Session(t).DB().Ping())
 		assert.False(t, called)
 	})
 }
 
+func TestBuilderFuncsAreGivenTheSessionsTest(t *testing.T) {
+	t.Parallel()
+
+	var got []*testing.T
+	conn := func(t *testing.T, _ *pgx.Conn) { got = append(got, t) }
+	connector := func(t *testing.T, c driver.Connector) driver.Connector {
+		got = append(got, t)
+		return c
+	}
+
+	s := sandpit.With().Conn(conn).Connector(connector).Session(t)
+	t.Run("from a subtest", func(*testing.T) {
+		s.With().Conn(conn).Connector(connector).DB()
+	})
+
+	// SessionBuilder.Conn, DBBuilder.Conn, SessionBuilder.Connector and
+	// DBBuilder.Connector.
+	require.Len(t, got, 4)
+	for _, g := range got {
+		assert.Same(t, t, g)
+	}
+}
+
 func TestSessionBuilderConnFailsTest(t *testing.T) {
 	if os.Getenv("PGSANDPIT_CHILD_SESSION_CONN") != "" {
-		sandpit.With().Conn(func(*pgx.Conn) {
+		sandpit.With().Conn(func(*testing.T, *pgx.Conn) {
 			require.Fail(t, "failed in the callback")
 		}).Session(t)
 		t.Log("Session returned")

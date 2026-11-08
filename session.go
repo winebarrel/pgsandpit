@@ -51,7 +51,7 @@ type Session struct {
 	// opened through, and whether statements interleave with transactions.
 	readOnly   bool
 	timeout    time.Duration
-	connector  func(driver.Connector) driver.Connector
+	connector  func(*testing.T, driver.Connector) driver.Connector
 	interleave bool
 
 	// sem is held while a statement runs. Without interleave, an application
@@ -203,7 +203,7 @@ func (s *Session) close() {
 }
 
 // withPgxConn runs f with the session's *pgx.Conn while it holds the session.
-func (s *Session) withPgxConn(timeout time.Duration, f func(*pgx.Conn)) error {
+func (s *Session) withPgxConn(timeout time.Duration, f func(*testing.T, *pgx.Conn)) error {
 	release, err := s.acquire(context.Background(), timeout)
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func (s *Session) withPgxConn(timeout time.Duration, f func(*pgx.Conn)) error {
 	// does, Raw would take it for a panic and release the connection with
 	// driver.ErrBadConn, so that database/sql may discard it. Holding the session
 	// keeps c from being used by anything else meanwhile.
-	f(c)
+	f(s.t, c)
 	return nil
 }
 
