@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,10 +38,10 @@ var (
 	_ driver.NamedValueChecker  = (*conn)(nil)
 )
 
-// acquire makes the session this conn's for one call. A conn that holds the
-// session for an application transaction already has it.
+// acquire makes the session this conn's for one call. Without interleave, a
+// conn that holds the session for an application transaction already has it.
 func (c *conn) acquire(ctx context.Context) (func(), error) {
-	if c.tx != nil {
+	if c.tx != nil && !c.s.interleave {
 		return func() {}, nil
 	}
 	return c.s.acquire(ctx, c.timeout)
@@ -62,6 +64,9 @@ func (c *conn) do(ctx context.Context, fn func(context.Context) error) error {
 	defer release()
 
 	inTx := c.tx != nil
+	if inTx && c.tx.endedByOuter {
+		return errEndedByOuter
+	}
 	if inTx && !c.readOnly {
 		return fn(ctx)
 	}
@@ -138,7 +143,9 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 }
 
 // BeginTx emulates a transaction with a savepoint. The transaction holds the
-// session until it ends. TxOptions are ignored.
+// session until it ends. With interleave, it does not: it holds the session
+// only while each of its statements runs, and a transaction begun while it is
+// open nests inside it. TxOptions are ignored.
 func (c *conn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, error) {
 	if c.tx != nil {
 		return nil, errors.New("pgsandpit: a transaction is already open on this connection")
@@ -147,14 +154,25 @@ func (c *conn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, erro
 	if err != nil {
 		return nil, err
 	}
+	if c.s.interleave {
+		defer release()
+		release = func() {}
+	}
+
 	name := c.s.savepoint("tx")
 	if _, err := c.s.tx.ExecContext(context.WithoutCancel(ctx), "SAVEPOINT "+name); err != nil {
 		release()
 		return nil, err
 	}
-	c.s.setHolder(currentStack())
-	c.tx = &tx{c: c, name: name, release: release}
-	return c.tx, nil
+	stack := currentStack()
+	t := &tx{c: c, name: name, release: release, begunAt: stack}
+	if c.s.interleave {
+		c.s.txs = append(c.s.txs, t)
+	} else {
+		c.s.setHolder(stack)
+	}
+	c.tx = t
+	return t, nil
 }
 
 func (c *conn) Begin() (driver.Tx, error) {
@@ -205,6 +223,12 @@ type tx struct {
 	c       *conn
 	name    string
 	release func()
+	begunAt string // stack of the Begin
+
+	// endedByOuter is set, with interleave, when a transaction that this one
+	// is nested in ended first and took this one's savepoint with it. Read and
+	// written only while the session is held.
+	endedByOuter bool
 }
 
 // Commit releases the savepoint. If the transaction is aborted, it rolls back
@@ -215,7 +239,23 @@ func (t *tx) Commit() error {
 	defer func() { t.finish(result) }()
 
 	ctx := context.Background()
-	_, err := t.c.s.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+t.name)
+	release, err := t.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if t.endedByOuter {
+		return errEndedByOuter
+	}
+	if inner := t.unnest(); len(inner) > 0 {
+		// Releasing the savepoint would commit what the inner transactions
+		// wrote, which they have not committed. Roll back instead.
+		if err := t.c.s.rollbackTo(ctx, t.name); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: a transaction was committed while %d transaction(s) begun after it were still open, so it was rolled back with them", ErrTxOrder, len(inner))
+	}
+	_, err = t.c.s.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+t.name)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == inFailedSQLTransaction {
 		if err := t.c.s.rollbackTo(ctx, t.name); err != nil {
@@ -231,7 +271,48 @@ func (t *tx) Commit() error {
 
 func (t *tx) Rollback() error {
 	defer t.finish(TxRolledBack)
-	return t.c.s.rollbackTo(context.Background(), t.name)
+	ctx := context.Background()
+	release, err := t.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if t.endedByOuter {
+		return errEndedByOuter
+	}
+	// Rolling back to the savepoint also rolls back the inner transactions.
+	t.unnest()
+	return t.c.s.rollbackTo(ctx, t.name)
+}
+
+// errEndedByOuter is returned when a transaction ends after a transaction it
+// is nested in ended and took it with it.
+var errEndedByOuter = fmt.Errorf("%w: a transaction begun before this one ended first and rolled this one back", ErrTxOrder)
+
+// unnest removes the transaction from the open ones, with interleave, and
+// returns the transactions nested in it, which end with it. It is called while
+// the session is held.
+func (t *tx) unnest() []*tx {
+	s := t.c.s
+	i := slices.Index(s.txs, t)
+	if i < 0 {
+		return nil
+	}
+	inner := slices.Clone(s.txs[i+1:])
+	s.txs = s.txs[:i]
+	for _, in := range inner {
+		in.endedByOuter = true
+	}
+	return inner
+}
+
+// acquire takes the session for the statement that ends the transaction. Only
+// with interleave does the transaction not hold it already.
+func (t *tx) acquire(ctx context.Context) (func(), error) {
+	if !t.c.s.interleave {
+		return func() {}, nil
+	}
+	return t.c.s.acquire(ctx, t.c.timeout)
 }
 
 func (t *tx) finish(result TxResult) {

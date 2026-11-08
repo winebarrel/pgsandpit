@@ -20,12 +20,13 @@ import (
 //		// ...
 //	}
 type SessionBuilder struct {
-	sp        *Sandpit
-	readOnly  bool
-	timeout   time.Duration
-	connector func(driver.Connector) driver.Connector
-	conn      func(*pgx.Conn)
-	cache     bool
+	sp         *Sandpit
+	readOnly   bool
+	timeout    time.Duration
+	connector  func(driver.Connector) driver.Connector
+	conn       func(*pgx.Conn)
+	cache      bool
+	interleave bool
 }
 
 // ReadOnly makes every *sql.DB of the session reject writes, as
@@ -85,6 +86,33 @@ func (b *SessionBuilder) Cache() *SessionBuilder {
 	return &c
 }
 
+// Interleave lets a statement run outside an application transaction while
+// that transaction is open, instead of waiting for it to end. The statement
+// runs at once, inside the open transaction, in a savepoint of its own: it sees
+// what the transaction wrote, a failure fails only that statement, and what it
+// writes is rolled back with the transaction if the transaction rolls back.
+//
+// It is for code that begins a transaction on a *sql.DB and then, before the
+// transaction ends, uses the *sql.DB outside the transaction, which runs on
+// another connection outside a test. Without Interleave, such a statement waits
+// for the transaction, which waits for the statement, until ErrTimeout.
+//
+// A transaction begun while another is open does not wait for it either: it
+// nests inside it, in a savepoint inside the open transaction's savepoint.
+// Nested transactions must end in the reverse order they began. If one ends
+// before a transaction begun after it, PostgreSQL ends the later one with it:
+// a Commit of the earlier one rolls both back and returns an error wrapping
+// ErrTxOrder, and the later one's Commit or Rollback returns such an error.
+//
+// Statements still run one at a time. A statement or a transaction in another
+// goroutine also runs inside an open transaction instead of waiting for it, so
+// transactions that overlap in different goroutines can end out of order.
+func (b *SessionBuilder) Interleave() *SessionBuilder {
+	c := *b
+	c.interleave = true
+	return &c
+}
+
 // Session opens a connection, begins a transaction on it, and returns a
 // Session for it. The transaction is rolled back and the connection closed when
 // t and its subtests finish. Session fails t if it cannot connect. With Cache,
@@ -126,13 +154,14 @@ func (b *SessionBuilder) open(t *testing.T) *Session {
 		t.Fatalf("pgsandpit: failed to begin the session transaction: %s", err)
 	}
 	s := &Session{
-		t:         t,
-		conn:      conn,
-		tx:        tx,
-		readOnly:  b.readOnly,
-		timeout:   b.timeout,
-		connector: b.connector,
-		sem:       make(chan struct{}, 1),
+		t:          t,
+		conn:       conn,
+		tx:         tx,
+		readOnly:   b.readOnly,
+		timeout:    b.timeout,
+		connector:  b.connector,
+		interleave: b.interleave,
+		sem:        make(chan struct{}, 1),
 	}
 	// Registered before b.conn runs, so that the session is rolled back even if
 	// b.conn fails the test.
