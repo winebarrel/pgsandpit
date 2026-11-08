@@ -25,6 +25,7 @@ type SessionBuilder struct {
 	timeout   time.Duration
 	connector func(driver.Connector) driver.Connector
 	conn      func(*pgx.Conn)
+	cache     bool
 }
 
 // ReadOnly makes every *sql.DB of the session reject writes, as
@@ -70,10 +71,44 @@ func (b *SessionBuilder) Conn(f func(c *pgx.Conn)) *SessionBuilder {
 	return &c
 }
 
+// Cache makes Session return the session cached for t in the Sandpit if there is
+// one, and otherwise open one and cache it until t and its subtests finish, so
+// that helpers can get the session from t alone.
+//
+// The options of the call that opened the session apply: those of a later call
+// that finds it in the cache are ignored. Only sessions built with Cache are
+// cached. A subtest has its own t, so it gets its own session rather than its
+// parent's.
+func (b *SessionBuilder) Cache() *SessionBuilder {
+	c := *b
+	c.cache = true
+	return &c
+}
+
 // Session opens a connection, begins a transaction on it, and returns a
 // Session for it. The transaction is rolled back and the connection closed when
-// t and its subtests finish. Session fails t if it cannot connect.
+// t and its subtests finish. Session fails t if it cannot connect. With Cache,
+// it returns the session cached for t if there is one.
 func (b *SessionBuilder) Session(t *testing.T) *Session {
+	t.Helper()
+	if !b.cache {
+		return b.open(t)
+	}
+	v, _ := b.sp.cached.LoadOrStore(t, &cachedSession{})
+	e := v.(*cachedSession)
+	e.once.Do(func() {
+		t.Helper()
+		t.Cleanup(func() { b.sp.cached.Delete(t) })
+		e.s = b.open(t)
+	})
+	if e.s == nil {
+		// Another call failed to open the session and has reported why.
+		t.FailNow()
+	}
+	return e.s
+}
+
+func (b *SessionBuilder) open(t *testing.T) *Session {
 	t.Helper()
 	pool, err := b.sp.pool()
 	if err != nil {
