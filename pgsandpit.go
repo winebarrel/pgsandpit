@@ -15,7 +15,6 @@
 package pgsandpit
 
 import (
-	"context"
 	"database/sql"
 	"sync"
 	"testing"
@@ -28,8 +27,9 @@ import (
 )
 
 // DefaultTimeout is how long a call waits for the session while another
-// transaction holds it, unless the *sql.DB was built with Builder.Timeout.
-const DefaultTimeout = 10 * time.Second
+// transaction holds it, unless the session was built with
+// SessionBuilder.Timeout or the *sql.DB with DBBuilder.Timeout.
+const DefaultTimeout = 60 * time.Second
 
 // cancelDeadlineDelay is how long pgx waits for a cancel request to take effect
 // before it gives up on the connection. A canceled query normally returns well
@@ -92,32 +92,17 @@ func (sp *Sandpit) pool() (*sql.DB, error) {
 
 // Session opens a connection, begins a transaction on it, and returns a
 // Session for it. The transaction is rolled back and the connection closed when
-// t and its subtests finish. Session fails t if it cannot connect.
+// t and its subtests finish. Session fails t if it cannot connect. It is the
+// same as sp.With().Session(t).
 func (sp *Sandpit) Session(t *testing.T) *Session {
 	t.Helper()
-	pool, err := sp.pool()
-	if err != nil {
-		t.Fatalf("pgsandpit: %s", err)
-	}
-	ctx := context.Background()
-	conn, err := pool.Conn(ctx)
-	if err != nil {
-		t.Fatalf("pgsandpit: failed to connect: %s", err)
-	}
-	// The transaction must not end with a test's context, so it gets its own.
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		_ = conn.Close()
-		t.Fatalf("pgsandpit: failed to begin the session transaction: %s", err)
-	}
-	s := &Session{
-		t:    t,
-		conn: conn,
-		tx:   tx,
-		sem:  make(chan struct{}, 1),
-	}
-	t.Cleanup(s.close)
-	return s
+	return sp.With().Session(t)
+}
+
+// With starts building a Session with options. The Sandpit itself is not
+// changed.
+func (sp *Sandpit) With() *SessionBuilder {
+	return &SessionBuilder{sp: sp, timeout: DefaultTimeout}
 }
 
 // Close closes the connection pool the sessions are taken from. Call it from

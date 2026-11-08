@@ -72,16 +72,20 @@ func TestSessionFailsTestWithoutDatabase(t *testing.T) {
 
 func TestLeakedTxFailsTest(t *testing.T) {
 	if os.Getenv("PGSANDPIT_CHILD_LEAK") != "" {
-		db := sandpit.Session(t).DB()
+		// The end of the test waits for the session as long as its timeout.
+		db := sandpit.With().Timeout(100 * time.Millisecond).Session(t).DB()
 		_, err := db.Begin() // never committed or rolled back
 		require.NoError(t, err)
 		return
 	}
 	t.Parallel()
 
+	start := time.Now()
 	out, err := runChild(t, "TestLeakedTxFailsTest", "PGSANDPIT_CHILD_LEAK=1")
 	require.Error(t, err)
+	assert.Less(t, time.Since(start), pgsandpit.DefaultTimeout)
 	assert.Contains(t, out, "pgsandpit: the session is still in use at the end of the test")
+	assert.Contains(t, out, "after 100ms")
 	assert.Contains(t, out, "pgsandpit_test.TestLeakedTxFailsTest")
 }
 

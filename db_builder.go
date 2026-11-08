@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Builder builds a *sql.DB for a Session. Each method returns a new Builder,
-// so a Builder can be shared and branched.
-type Builder struct {
+// DBBuilder builds a *sql.DB for a Session. Each method returns a new
+// DBBuilder, so a DBBuilder can be shared and branched.
+type DBBuilder struct {
 	s         *Session
 	readOnly  bool
 	timeout   time.Duration
@@ -24,15 +24,16 @@ type Builder struct {
 // *sql.DB values of the session wrote. A rejected write fails only that
 // statement, as in a read-only transaction outside a test, except that inside
 // an application transaction it aborts that transaction.
-func (b *Builder) ReadOnly() *Builder {
+func (b *DBBuilder) ReadOnly() *DBBuilder {
 	c := *b
 	c.readOnly = true
 	return &c
 }
 
 // Timeout sets how long a call on the *sql.DB waits for the session while
-// another transaction holds it. The default is DefaultTimeout.
-func (b *Builder) Timeout(d time.Duration) *Builder {
+// another transaction holds it. The default is the session's timeout (see
+// SessionBuilder.Timeout).
+func (b *DBBuilder) Timeout(d time.Duration) *DBBuilder {
 	c := *b
 	c.timeout = d
 	return &c
@@ -40,8 +41,9 @@ func (b *Builder) Timeout(d time.Duration) *Builder {
 
 // Connector sets a function that is given the connector pgsandpit made for the
 // *sql.DB and returns the connector the *sql.DB is opened with, as by
-// sql.OpenDB.
-func (b *Builder) Connector(f func(driver.Connector) driver.Connector) *Builder {
+// sql.OpenDB. The default is the session's (see SessionBuilder.Connector); f
+// replaces it rather than wrapping it.
+func (b *DBBuilder) Connector(f func(driver.Connector) driver.Connector) *DBBuilder {
 	c := *b
 	c.connector = f
 	return &c
@@ -54,7 +56,7 @@ func (b *Builder) Connector(f func(driver.Connector) driver.Connector) *Builder 
 // What f runs, runs in the session's transaction as it is: it is not read-only,
 // and a statement that fails aborts the session's transaction. f must not
 // begin, commit or roll back a transaction, nor use c after it returns.
-func (b *Builder) Conn(f func(c *pgx.Conn)) *Builder {
+func (b *DBBuilder) Conn(f func(c *pgx.Conn)) *DBBuilder {
 	c := *b
 	c.conn = f
 	return &c
@@ -62,7 +64,7 @@ func (b *Builder) Conn(f func(c *pgx.Conn)) *Builder {
 
 // DB returns the *sql.DB. It is closed when the test ends; closing it earlier
 // does not end the session.
-func (b *Builder) DB() *sql.DB {
+func (b *DBBuilder) DB() *sql.DB {
 	if b.conn != nil {
 		if err := b.s.withPgxConn(b.timeout, b.conn); err != nil {
 			b.s.t.Fatal(err)
@@ -79,7 +81,7 @@ func (b *Builder) DB() *sql.DB {
 }
 
 type connector struct {
-	b Builder
+	b DBBuilder
 }
 
 func (c *connector) Connect(context.Context) (driver.Conn, error) {

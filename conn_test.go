@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuilderConn(t *testing.T) {
+func TestDBBuilderConn(t *testing.T) {
 	t.Parallel()
 
 	t.Run("runs once on the session when the *sql.DB is made", func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestBuilderConn(t *testing.T) {
 	})
 }
 
-func TestBuilderConnFailsTest(t *testing.T) {
+func TestDBBuilderConnFailsTest(t *testing.T) {
 	switch os.Getenv("PGSANDPIT_CHILD_CONN") {
 	case "":
 	case "assertion":
@@ -95,7 +95,7 @@ func TestBuilderConnFailsTest(t *testing.T) {
 	for name, want := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			out, err := runChild(t, "TestBuilderConnFailsTest", "PGSANDPIT_CHILD_CONN="+name)
+			out, err := runChild(t, "TestDBBuilderConnFailsTest", "PGSANDPIT_CHILD_CONN="+name)
 			require.Error(t, err)
 			assert.Contains(t, out, want)
 			assert.NotContains(t, out, "DB returned")

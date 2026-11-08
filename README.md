@@ -59,6 +59,27 @@ db := s.With().Conn(func(c *pgx.Conn) {
 
 What it runs, runs in the session's transaction as it is: it is not read-only, and a failing statement aborts the session's transaction. It must not begin, commit or roll back a transaction.
 
+Options for a session are chained after `sandpit.With()`. A `SessionBuilder` can be made once and shared by the tests:
+
+```go
+var base = sandpit.With().
+	Timeout(5 * time.Second).
+	Conn(func(c *pgx.Conn) {
+		if _, err := c.Exec(context.Background(), "SET TIME ZONE 'UTC'"); err != nil {
+			panic(err)
+		}
+	})
+
+func TestFoo(t *testing.T) {
+	s := base.Session(t)
+	db := s.DB()                        // waits at most 5 seconds for the session
+	// ...
+}
+```
+
+- `Timeout` and `Connector` are the defaults of the session's `*sql.DB` values. `s.With().Timeout(...)` and `s.With().Connector(...)` replace them; a `Connector` set on the `*sql.DB` is used instead of the session's, not on top of it. `Timeout` also bounds how long the end of the test waits for a session that is still in use.
+- `Conn` is called once, when `Session` makes the session, with the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
+
 To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
 
 ```go
@@ -81,14 +102,14 @@ The connections are pooled across sessions, so `OptionAfterConnect` runs once pe
 - **Isolation**: each `Session` has its own connection and transaction, so parallel tests do not see each other's data. Tests that write the same rows or unique keys still wait for each other's locks until the first test ends.
 - **Transactions**: `Begin` creates a savepoint, `Commit` releases it, and `Rollback` rolls back to it. `TxOptions` are ignored. Committing a transaction that hit an error rolls it back and returns `pgx.ErrTxCommitRollback`, as PostgreSQL does.
 - **Statements outside a transaction** each run in their own savepoint, so a failing statement (such as a unique violation) fails alone, as in autocommit mode, instead of aborting the rest of the test.
-- **Serialization**: one statement, or one transaction, runs on a session at a time; the others wait. A call that waits longer than the timeout (10 seconds by default) returns an error wrapping `pgsandpit.ErrTimeout`, with the stack of the `Begin` that holds the session. This is usually a transaction left open, or a `*sql.DB` used outside a transaction while that transaction is open in the same goroutine.
+- **Serialization**: one statement, or one transaction, runs on a session at a time; the others wait. A call that waits longer than the timeout (60 seconds by default) returns an error wrapping `pgsandpit.ErrTimeout`, with the stack of the `Begin` that holds the session. This is usually a transaction left open, or a `*sql.DB` used outside a transaction while that transaction is open in the same goroutine.
 - **Read-only**: a read-only `*sql.DB` runs each statement with `transaction_read_only` on, so PostgreSQL rejects writes, including writes inside functions.
 - **Rows** are read in full before a query returns, so an open `*sql.Rows` does not hold the session.
 - **Cancellation**: a canceled context cancels the query on the server and leaves the session usable. A transaction whose context is canceled is rolled back.
 
 ## Out of scope
 
-Tests of concurrency itself (lock waits, `SELECT ... FOR UPDATE`, isolation levels) and of session state (`SET`, advisory locks, temporary tables shared across `*sql.DB` values) need real separate connections.
+Tests of concurrency itself (lock waits, `SELECT ... FOR UPDATE`, isolation levels) and of session state changed through a `*sql.DB` (`SET`, advisory locks, temporary tables shared across `*sql.DB` values) need real separate connections. A parameter that every `*sql.DB` of the session needs can be set with `SessionBuilder.Conn`.
 
 ## Running the tests
 
