@@ -41,8 +41,8 @@ func (b *DBBuilder) Timeout(d time.Duration) *DBBuilder {
 
 // Connector sets a function that is given the connector pgsandpit made for the
 // *sql.DB and returns the connector the *sql.DB is opened with, as by
-// sql.OpenDB. The default is the session's (see SessionBuilder.Connector); f
-// replaces it rather than wrapping it.
+// sql.OpenDB. If the session was built with SessionBuilder.Connector, f is
+// given the connector that function returned.
 func (b *DBBuilder) Connector(f func(driver.Connector) driver.Connector) *DBBuilder {
 	c := *b
 	c.connector = f
@@ -71,6 +71,9 @@ func (b *DBBuilder) DB() *sql.DB {
 		}
 	}
 	var c driver.Connector = &connector{b: *b}
+	if b.s.connector != nil {
+		c = b.s.connector(c)
+	}
 	if b.connector != nil {
 		c = b.connector(c)
 	}

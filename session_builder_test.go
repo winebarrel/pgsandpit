@@ -57,7 +57,7 @@ func TestSessionBuilderTimeout(t *testing.T) {
 func TestSessionBuilderConnector(t *testing.T) {
 	t.Parallel()
 
-	t.Run("is the default of the *sql.DB values", func(t *testing.T) {
+	t.Run("is applied to every *sql.DB", func(t *testing.T) {
 		var hooks []*hookConnector
 		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
 			h := &hookConnector{Connector: c}
@@ -75,22 +75,24 @@ func TestSessionBuilderConnector(t *testing.T) {
 		assert.Equal(t, []string{": SELECT 2"}, hooks[1].queries)
 	})
 
-	t.Run("is replaced by DBBuilder.Connector", func(t *testing.T) {
-		sessionCalls := 0
+	t.Run("is wrapped by DBBuilder.Connector", func(t *testing.T) {
+		sessionHook := &hookConnector{}
 		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
-			sessionCalls++
-			return c
+			sessionHook.Connector = c
+			return sessionHook
 		}).Session(t)
 
-		hook := &hookConnector{}
+		dbHook := &hookConnector{}
 		_, err := s.With().Connector(func(c driver.Connector) driver.Connector {
-			hook.Connector = c
-			return hook
+			// Given what the session's function returned.
+			assert.Same(t, sessionHook, c)
+			dbHook.Connector = c
+			return dbHook
 		}).DB().Exec(`SELECT 1`)
 		require.NoError(t, err)
 
-		assert.Equal(t, 0, sessionCalls)
-		assert.Equal(t, []string{": SELECT 1"}, hook.queries)
+		assert.Equal(t, []string{": SELECT 1"}, dbHook.queries)
+		assert.Equal(t, []string{": SELECT 1"}, sessionHook.queries)
 	})
 
 	t.Run("does not change the builder", func(t *testing.T) {

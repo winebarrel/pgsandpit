@@ -77,7 +77,8 @@ func TestFoo(t *testing.T) {
 }
 ```
 
-- `Timeout` and `Connector` are the defaults of the session's `*sql.DB` values. `s.With().Timeout(...)` and `s.With().Connector(...)` replace them; a `Connector` set on the `*sql.DB` is used instead of the session's, not on top of it. `Timeout` also bounds how long the end of the test waits for a session that is still in use.
+- `Timeout` is the default of the session's `*sql.DB` values, which `s.With().Timeout(...)` replaces. It also bounds how long the end of the test waits for a session that is still in use.
+- `Connector` is applied to every `*sql.DB` of the session, each time one is made. A `Connector` set with `s.With().Connector(...)` is given the connector the session's returned.
 - `Conn` is called once, when `Session` makes the session, with the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
 
 To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
