@@ -82,6 +82,23 @@ func TestFoo(t *testing.T) {
 - `Connector` is applied to every `*sql.DB` of the session, each time one is made. A `Connector` set with `s.With().Connector(...)` is given the connector the session's returned.
 - `Conn` is called once, when `Session` makes the session, with the session's `*pgx.Conn`. A parameter it `SET`s applies to every `*sql.DB` of the session and is reset when the session is rolled back.
 
+`TxResults` returns how the transactions of the session's `*sql.DB` values ended, in order, so a test can check that the code under test rolled back:
+
+```go
+s := sandpit.Session(t)
+
+err := svc.Transfer(ctx, s.DB(), from, to, 100)
+require.Error(t, err)
+
+assert.Equal(t, []pgsandpit.TxResult{pgsandpit.TxRolledBack}, s.TxResults())
+```
+
+- `TxCommitted`: `Commit` succeeded.
+- `TxRolledBack`: `Rollback` was called, or the transaction's context was canceled. `database/sql` rolls back a canceled transaction in another goroutine, so its result may appear shortly after the cancellation.
+- `TxCommitFailed`: `Commit` was called but did not commit, such as when the transaction had hit an error.
+
+A transaction that is still open is not included. Savepoints the application creates with SQL are not transactions here, so they are not included either.
+
 To configure pgx, pass a `*pgx.ConnConfig` and the options of `stdlib.OpenDB`:
 
 ```go

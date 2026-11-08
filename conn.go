@@ -211,7 +211,9 @@ type tx struct {
 // to the savepoint and returns pgx.ErrTxCommitRollback, as a COMMIT of an
 // aborted transaction does.
 func (t *tx) Commit() error {
-	defer t.finish()
+	result := TxCommitFailed
+	defer func() { t.finish(result) }()
+
 	ctx := context.Background()
 	_, err := t.c.s.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+t.name)
 	var pgErr *pgconn.PgError
@@ -221,17 +223,20 @@ func (t *tx) Commit() error {
 		}
 		return pgx.ErrTxCommitRollback
 	}
+	if err == nil {
+		result = TxCommitted
+	}
 	return err
 }
 
 func (t *tx) Rollback() error {
-	defer t.finish()
+	defer t.finish(TxRolledBack)
 	return t.c.s.rollbackTo(context.Background(), t.name)
 }
 
-func (t *tx) finish() {
+func (t *tx) finish(result TxResult) {
 	t.c.tx = nil
-	t.c.s.setHolder("")
+	t.c.s.endTx(result)
 	t.release()
 }
 
