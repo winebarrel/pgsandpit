@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,8 +51,52 @@ type Session struct {
 
 	seq atomic.Uint64
 
-	mu     sync.Mutex
-	holder string // stack of the Begin that holds the session, for ErrTimeout
+	mu        sync.Mutex
+	holder    string     // stack of the Begin that holds the session, for ErrTimeout
+	txResults []TxResult // how the application transactions ended, in order
+}
+
+// TxResult is how an application transaction ended.
+type TxResult int
+
+const (
+	// TxCommitted means Commit succeeded.
+	TxCommitted TxResult = iota
+	// TxRolledBack means the transaction ended with a rollback: Rollback was
+	// called, or database/sql rolled it back because its context was canceled.
+	TxRolledBack
+	// TxCommitFailed means Commit was called but did not commit, such as when
+	// the transaction had hit an error, which rolls it back and makes Commit
+	// return pgx.ErrTxCommitRollback.
+	TxCommitFailed
+)
+
+// String returns the name of the constant, so that a failed assertion on
+// TxResults reads well.
+func (r TxResult) String() string {
+	switch r {
+	case TxCommitted:
+		return "TxCommitted"
+	case TxRolledBack:
+		return "TxRolledBack"
+	case TxCommitFailed:
+		return "TxCommitFailed"
+	default:
+		return fmt.Sprintf("TxResult(%d)", int(r))
+	}
+}
+
+// TxResults returns how the application transactions of every *sql.DB of the
+// session ended, in the order they ended. A transaction that is still open is
+// not included. It does not wait for the session, so it can be called while a
+// transaction is open.
+//
+// database/sql rolls back a transaction whose context was canceled in another
+// goroutine, so its result may appear shortly after the cancellation.
+func (s *Session) TxResults() []TxResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.txResults)
 }
 
 // DB returns a *sql.DB that runs on the session. It is the same as
@@ -106,6 +151,14 @@ func (s *Session) timeoutError(timeout time.Duration) error {
 func (s *Session) setHolder(stack string) {
 	s.mu.Lock()
 	s.holder = stack
+	s.mu.Unlock()
+}
+
+// endTx records how the application transaction that held the session ended.
+func (s *Session) endTx(result TxResult) {
+	s.mu.Lock()
+	s.holder = ""
+	s.txResults = append(s.txResults, result)
 	s.mu.Unlock()
 }
 
