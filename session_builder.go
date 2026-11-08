@@ -23,7 +23,7 @@ type SessionBuilder struct {
 	sp         *Sandpit
 	readOnly   bool
 	timeout    time.Duration
-	connector  func(*testing.T, driver.Connector) driver.Connector
+	connector  func(driver.Connector) driver.Connector
 	conn       func(*testing.T, *pgx.Conn)
 	cache      bool
 	interleave bool
@@ -50,9 +50,9 @@ func (b *SessionBuilder) Timeout(d time.Duration) *SessionBuilder {
 
 // Connector sets a function that is given the connector pgsandpit made for each
 // *sql.DB of the session and returns the connector the *sql.DB is opened with.
-// It is called each time a *sql.DB is made, with the test the session was opened
-// for as t. A function set with DBBuilder.Connector is given what f returns.
-func (b *SessionBuilder) Connector(f func(t *testing.T, c driver.Connector) driver.Connector) *SessionBuilder {
+// It is called each time a *sql.DB is made. A function set with
+// DBBuilder.Connector is given what f returns.
+func (b *SessionBuilder) Connector(f func(driver.Connector) driver.Connector) *SessionBuilder {
 	c := *b
 	c.connector = f
 	return &c

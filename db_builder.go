@@ -17,7 +17,7 @@ type DBBuilder struct {
 	s         *Session
 	readOnly  bool
 	timeout   time.Duration
-	connector func(*testing.T, driver.Connector) driver.Connector
+	connector func(driver.Connector) driver.Connector
 	conn      func(*testing.T, *pgx.Conn)
 }
 
@@ -44,9 +44,8 @@ func (b *DBBuilder) Timeout(d time.Duration) *DBBuilder {
 // Connector sets a function that is given the connector pgsandpit made for the
 // *sql.DB and returns the connector the *sql.DB is opened with, as by
 // sql.OpenDB. If the session was built with SessionBuilder.Connector, f is
-// given the connector that function returned. t is the test the session was
-// opened for.
-func (b *DBBuilder) Connector(f func(t *testing.T, c driver.Connector) driver.Connector) *DBBuilder {
+// given the connector that function returned.
+func (b *DBBuilder) Connector(f func(driver.Connector) driver.Connector) *DBBuilder {
 	c := *b
 	c.connector = f
 	return &c
@@ -75,10 +74,10 @@ func (b *DBBuilder) DB() *sql.DB {
 	}
 	var c driver.Connector = &connector{b: *b}
 	if b.s.connector != nil {
-		c = b.s.connector(b.s.t, c)
+		c = b.s.connector(c)
 	}
 	if b.connector != nil {
-		c = b.connector(b.s.t, c)
+		c = b.connector(c)
 	}
 	db := sql.OpenDB(c)
 	// Registered after the session's cleanup, so it runs before it.
