@@ -37,7 +37,8 @@ type Session struct {
 	conn *sql.Conn
 	tx   *sql.Tx
 
-	// Defaults of the *sql.DB values, from the SessionBuilder.
+	// From the SessionBuilder: the default timeout of the *sql.DB values, and
+	// the connector function every *sql.DB is opened through.
 	timeout   time.Duration
 	connector func(driver.Connector) driver.Connector
 
@@ -60,7 +61,7 @@ func (s *Session) DB() *sql.DB {
 // With starts building a *sql.DB with options, starting from the defaults the
 // session was built with. The Session itself is not changed.
 func (s *Session) With() *DBBuilder {
-	return &DBBuilder{s: s, timeout: s.timeout, connector: s.connector}
+	return &DBBuilder{s: s, timeout: s.timeout}
 }
 
 func (s *Session) savepoint(kind string) string {

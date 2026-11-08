@@ -36,9 +36,10 @@ func (b *SessionBuilder) Timeout(d time.Duration) *SessionBuilder {
 	return &c
 }
 
-// Connector sets the default of DBBuilder.Connector for the *sql.DB values of
-// the session. A *sql.DB built with DBBuilder.Connector uses that function
-// instead of this one; the two are not combined.
+// Connector sets a function that is given the connector pgsandpit made for each
+// *sql.DB of the session and returns the connector the *sql.DB is opened with.
+// It is called each time a *sql.DB is made. A function set with
+// DBBuilder.Connector is given what f returns.
 func (b *SessionBuilder) Connector(f func(driver.Connector) driver.Connector) *SessionBuilder {
 	c := *b
 	c.connector = f
