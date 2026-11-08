@@ -12,6 +12,42 @@ import (
 	"github.com/winebarrel/pgsandpit"
 )
 
+func TestSessionBuilderReadOnly(t *testing.T) {
+	t.Parallel()
+
+	t.Run("makes every *sql.DB read-only", func(t *testing.T) {
+		s := sandpit.With().ReadOnly().Session(t)
+
+		_, err := s.DB().Exec(`INSERT INTO users (email) VALUES ('session-ro1@example.com')`)
+		require.ErrorContains(t, err, "read-only transaction")
+		_, err = s.With().Timeout(time.Second).DB().Exec(`INSERT INTO users (email) VALUES ('session-ro2@example.com')`)
+		require.ErrorContains(t, err, "read-only transaction")
+
+		tx, err := s.DB().Begin()
+		require.NoError(t, err)
+		_, err = tx.Exec(`INSERT INTO users (email) VALUES ('session-ro3@example.com')`)
+		require.ErrorContains(t, err, "read-only transaction")
+		require.NoError(t, tx.Rollback())
+	})
+
+	t.Run("does not affect Conn", func(t *testing.T) {
+		s := sandpit.With().ReadOnly().Conn(func(c *pgx.Conn) {
+			_, err := c.Exec(t.Context(), `INSERT INTO users (email) VALUES ('session-ro-conn@example.com')`)
+			require.NoError(t, err)
+		}).Session(t)
+
+		assert.Equal(t, 1, countUsers(t, s.DB(), "session-ro-conn@example.com"))
+	})
+
+	t.Run("does not change the builder", func(t *testing.T) {
+		b := sandpit.With()
+		_ = b.ReadOnly()
+
+		_, err := b.Session(t).DB().Exec(`INSERT INTO users (email) VALUES ('session-ro-builder@example.com')`)
+		require.NoError(t, err)
+	})
+}
+
 func TestSessionBuilderTimeout(t *testing.T) {
 	t.Parallel()
 
