@@ -51,7 +51,7 @@ type Session struct {
 	// opened through, and whether statements interleave with transactions.
 	readOnly   bool
 	timeout    time.Duration
-	connector  func(*testing.T, driver.Connector) driver.Connector
+	connector  func(driver.Connector) driver.Connector
 	interleave bool
 
 	// sem is held while a statement runs. Without interleave, an application

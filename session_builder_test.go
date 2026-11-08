@@ -95,7 +95,7 @@ func TestSessionBuilderConnector(t *testing.T) {
 
 	t.Run("is applied to every *sql.DB", func(t *testing.T) {
 		var hooks []*hookConnector
-		s := sandpit.With().Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
+		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
 			h := &hookConnector{Connector: c}
 			hooks = append(hooks, h)
 			return h
@@ -113,13 +113,13 @@ func TestSessionBuilderConnector(t *testing.T) {
 
 	t.Run("is wrapped by DBBuilder.Connector", func(t *testing.T) {
 		sessionHook := &hookConnector{}
-		s := sandpit.With().Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
+		s := sandpit.With().Connector(func(c driver.Connector) driver.Connector {
 			sessionHook.Connector = c
 			return sessionHook
 		}).Session(t)
 
 		dbHook := &hookConnector{}
-		_, err := s.With().Connector(func(t *testing.T, c driver.Connector) driver.Connector {
+		_, err := s.With().Connector(func(c driver.Connector) driver.Connector {
 			// Given what the session's function returned.
 			assert.Same(t, sessionHook, c)
 			dbHook.Connector = c
@@ -134,7 +134,7 @@ func TestSessionBuilderConnector(t *testing.T) {
 	t.Run("does not change the builder", func(t *testing.T) {
 		b := sandpit.With()
 		called := false
-		_ = b.Connector(func(_ *testing.T, c driver.Connector) driver.Connector {
+		_ = b.Connector(func(c driver.Connector) driver.Connector {
 			called = true
 			return c
 		})
@@ -187,24 +187,19 @@ func TestSessionBuilderConn(t *testing.T) {
 	})
 }
 
-func TestBuilderFuncsAreGivenTheSessionsTest(t *testing.T) {
+func TestBuilderConnIsGivenTheSessionsTest(t *testing.T) {
 	t.Parallel()
 
 	var got []*testing.T
 	conn := func(t *testing.T, _ *pgx.Conn) { got = append(got, t) }
-	connector := func(t *testing.T, c driver.Connector) driver.Connector {
-		got = append(got, t)
-		return c
-	}
 
-	s := sandpit.With().Conn(conn).Connector(connector).Session(t)
+	s := sandpit.With().Conn(conn).Session(t)
 	t.Run("from a subtest", func(*testing.T) {
-		s.With().Conn(conn).Connector(connector).DB()
+		s.With().Conn(conn).DB()
 	})
 
-	// SessionBuilder.Conn, DBBuilder.Conn, SessionBuilder.Connector and
-	// DBBuilder.Connector.
-	require.Len(t, got, 4)
+	// SessionBuilder.Conn and DBBuilder.Conn.
+	require.Len(t, got, 2)
 	for _, g := range got {
 		assert.Same(t, t, g)
 	}
