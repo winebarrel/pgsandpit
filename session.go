@@ -3,6 +3,7 @@ package pgsandpit
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -36,6 +37,10 @@ type Session struct {
 	conn *sql.Conn
 	tx   *sql.Tx
 
+	// Defaults of the *sql.DB values, from the SessionBuilder.
+	timeout   time.Duration
+	connector func(driver.Connector) driver.Connector
+
 	// sem is held while a statement or an application transaction runs.
 	sem    chan struct{}
 	closed bool // read and written only while sem is held
@@ -52,10 +57,10 @@ func (s *Session) DB() *sql.DB {
 	return s.With().DB()
 }
 
-// With starts building a *sql.DB with options. The Session itself is not
-// changed.
-func (s *Session) With() *Builder {
-	return &Builder{s: s, timeout: DefaultTimeout}
+// With starts building a *sql.DB with options, starting from the defaults the
+// session was built with. The Session itself is not changed.
+func (s *Session) With() *DBBuilder {
+	return &DBBuilder{s: s, timeout: s.timeout, connector: s.connector}
 }
 
 func (s *Session) savepoint(kind string) string {
@@ -104,7 +109,7 @@ func (s *Session) setHolder(stack string) {
 func (s *Session) close() {
 	// The *sql.DB cleanups ran first and rolled back any transaction they
 	// still had. A transaction that is still open here was leaked.
-	release, err := s.acquire(context.Background(), DefaultTimeout)
+	release, err := s.acquire(context.Background(), s.timeout)
 	if err != nil {
 		s.t.Errorf("pgsandpit: the session is still in use at the end of the test: %s", err)
 	}
