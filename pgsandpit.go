@@ -45,6 +45,16 @@ type Sandpit struct {
 	once sync.Once
 	db   *sql.DB
 	err  error
+
+	cached sync.Map // *testing.T -> *cachedSession
+}
+
+// cachedSession is the entry of a test in Sandpit.cached. once makes concurrent
+// callers wait for one call that opens the session, and s stays nil if that call
+// failed the test.
+type cachedSession struct {
+	once sync.Once
+	s    *Session
 }
 
 // New returns a Sandpit for the database dsn points to. It does not connect
